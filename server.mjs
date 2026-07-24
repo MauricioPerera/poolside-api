@@ -24,6 +24,7 @@ let operation = Promise.resolve();
 const bridgeQueue = [];
 const bridgePending = new Map();
 let lastBridgePollAt = 0;
+const bridgeConnectionWindowMs = 60_000;
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -71,7 +72,9 @@ function requireToken(req) {
 }
 
 function bridgeIsConnected() {
-  return Date.now() - lastBridgePollAt < 5_000;
+  // Chrome puede limitar los temporizadores de una pestaña que está en segundo
+  // plano. Un minuto evita falsos desconectados sin cambiar la autenticación.
+  return Date.now() - lastBridgePollAt < bridgeConnectionWindowMs;
 }
 
 function enqueueBridge(command) {
@@ -210,6 +213,30 @@ async function sendMessageDirect(payload) {
   return { chatId, model: requestPayload.model, options: requestPayload.options, response };
 }
 
+async function sendMessageWithBridge(payload) {
+  const chats = await enqueueBridge({ type: "listChats" });
+  const chatId = payload.chatId || chats[0]?.id;
+  if (!chatId) throw new HttpError(409, "No hay una conversación disponible. Crea un chat en Poolside primero.");
+
+  const bridgePayload = { ...payload, chatId };
+  const result = await enqueueBridge({ type: "sendMessage", payload: bridgePayload });
+  if (result && typeof result.response === "string") return result;
+
+  // Algunas versiones de Chrome no devuelven el valor de executeScript en el
+  // mundo principal. El envío ya terminó; recuperamos el estado final mediante
+  // el mismo puente para conservar una respuesta útil para el cliente de API.
+  const state = await enqueueBridge({ type: "getChat", chatId });
+  const assistant = state.messages?.filter((item) => item.role === "assistant").at(-1);
+  const response = assistant?.parts?.find((part) => part.type === "text")?.text;
+  if (!response) throw new HttpError(502, "Poolside terminó el mensaje sin devolver texto.");
+  return {
+    chatId,
+    model: payload.model || "poolside/laguna-s-2.1",
+    options: { webSearch: payload.webSearch !== false, thinking: payload.thinking !== false },
+    response
+  };
+}
+
 function enqueue(task) {
   const next = operation.then(task, task);
   operation = next.catch(() => {});
@@ -272,7 +299,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && req.url === "/message") {
       const payload = validateMessagePayload(await body(req));
-      const result = await enqueue(() => bridgeOrCdp({ type: "sendMessage", payload }, () => sendMessageDirect(payload)));
+      const result = await enqueue(() => bridgeIsConnected() ? sendMessageWithBridge(payload) : sendMessageDirect(payload));
       return json(res, 200, result, headers);
     }
 
