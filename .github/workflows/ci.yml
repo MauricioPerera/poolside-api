@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node --check server.mjs
+      - run: node --check chrome-bridge/content.js
+      - run: node --check chrome-bridge/service-worker.js
+      - run: node --check chrome-bridge/options.js
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npx --yes @redocly/cli@latest lint openapi.yaml

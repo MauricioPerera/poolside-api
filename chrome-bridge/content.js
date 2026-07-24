@@ -1,6 +1,10 @@
 const bridgePoll = async () => {
   try {
-    const response = await fetch("http://127.0.0.1:3100/bridge/next");
+    const { poolsideApiToken } = await chrome.storage.local.get("poolsideApiToken");
+    if (!poolsideApiToken) return;
+    const response = await fetch("http://127.0.0.1:3100/bridge/next", {
+      headers: { "x-poolside-api-token": poolsideApiToken }
+    });
     if (response.status === 204) return;
     if (!response.ok) return;
     const command = await response.json();

@@ -1,60 +1,64 @@
 # Poolside Browser API
 
-API local que automatiza Poolside mediante una sesión autenticada de Chrome.
+API local para consultar y enviar mensajes a Poolside mediante una pestaña de Chrome autenticada. La extensión ejecuta las solicitudes dentro de `chat.poolside.ai`; la API no lee ni exporta cookies.
 
 La especificación completa está en [openapi.yaml](./openapi.yaml).
 
-## Uso
+## Seguridad
+
+- El servidor escucha solo en `127.0.0.1`.
+- Todas las rutas, salvo `GET /health`, exigen el encabezado `X-Poolside-API-Token`.
+- La extensión y la API comparten el mismo token, guardado localmente y excluido de Git.
+- CORS acepta por defecto solo solicitudes originadas desde `https://chat.poolside.ai`. Ajusta `POOLSIDE_ALLOWED_ORIGINS` únicamente si es imprescindible.
+- Si el puente de Chrome no está disponible, la API solo intenta conectarse a un Chrome que ya exponga DevTools Protocol; no crea perfiles ni persiste sesiones.
+
+## Instalación
 
 ```powershell
 cd <directorio-clonado>\poolside-api
-npm install
+npm ci
+
+$tokenBytes = New-Object byte[] 32
+[Security.Cryptography.RandomNumberGenerator]::Fill($tokenBytes)
+$env:POOLSIDE_API_TOKEN = [Convert]::ToHexString($tokenBytes).ToLower()
+$env:POOLSIDE_API_TOKEN
+
 npm start
 ```
 
-Se abrirá una ventana de Chrome con un perfil separado. Inicia sesión allí si es necesario.
+Guarda el token en un gestor de secretos local. No lo incluyas en comandos compartidos, archivos versionados ni capturas de pantalla.
 
-Por defecto, el servicio intenta conectarse primero a Chrome mediante DevTools Protocol en `http://127.0.0.1:9222`. Si no está disponible, usa el perfil separado `.poolside-profile`.
-
-## Puente para la sesión actual
-
-La alternativa recomendada para conservar tu Chrome actual es cargar la extensión local:
+## Configurar la extensión
 
 1. Abre `chrome://extensions`.
 2. Activa **Developer mode**.
-3. Selecciona **Load unpacked**.
-4. Elige la carpeta `<directorio-clonado>\poolside-api\chrome-bridge`.
-5. Recarga la pestaña de Poolside.
+3. Selecciona **Load unpacked** y elige `<directorio-clonado>\poolside-api\chrome-bridge`.
+4. En la tarjeta de la extensión, abre **Extension options**.
+5. Pega el valor de `POOLSIDE_API_TOKEN` y guarda.
+6. Recarga la pestaña de Poolside.
 
-La extensión solo ejecuta solicitudes dentro de `chat.poolside.ai` y se comunica con `127.0.0.1:3100`; no lee ni almacena cookies.
+## Uso
 
-Para usar la sesión normal de Chrome, cierra todas sus ventanas y arráncalo una vez con depuración local habilitada:
-
-```powershell
-& 'C:\Program Files\Google\Chrome\Application\chrome.exe' `
-  --remote-debugging-port=9222 `
-  --user-data-dir="$env:LOCALAPPDATA\Google\Chrome\User Data"
-```
-
-No compartas ese puerto fuera de tu computadora. Si Chrome está instalado en otra ubicación, define `CHROME_PATH` antes de iniciar.
-
-## Endpoints
-
-La API pública expone `GET /health`, `GET /chats`, `GET /chats/:chatId` y `POST /message`.
-Los endpoints `/bridge/*` son internos y los usa exclusivamente la extensión local.
+Define una variable de cabecera para los comandos locales:
 
 ```powershell
+$headers = @{ "X-Poolside-API-Token" = $env:POOLSIDE_API_TOKEN }
+
 Invoke-RestMethod http://127.0.0.1:3100/health
-
-Invoke-RestMethod http://127.0.0.1:3100/chats
-
-Invoke-RestMethod http://127.0.0.1:3100/chats/zU2tyjHTTsi4FwaLiGCP6VvV
+Invoke-RestMethod http://127.0.0.1:3100/chats -Headers $headers
+Invoke-RestMethod http://127.0.0.1:3100/chats/<chatId> -Headers $headers
 
 Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:3100/message `
+  -Headers $headers `
   -ContentType 'application/json' `
   -Body '{"message":"Responde únicamente OK","model":"poolside/laguna-s-2.1","thinking":true,"webSearch":false}'
 ```
 
-Esta integración depende de la interfaz visible de Poolside y puede requerir ajustes si cambia su HTML. No comparte credenciales: la sesión queda en `.poolside-profile`, que está excluida de Git.
+Modelos admitidos:
+
+- `poolside/laguna-s-2.1`
+- `poolside/laguna-xs-2.1`
+
+Los adjuntos aún no están implementados. La integración depende de las rutas internas de Poolside y puede requerir ajustes si cambian.

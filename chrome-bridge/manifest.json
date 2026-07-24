@@ -3,13 +3,17 @@
   "name": "Poolside Local API Bridge",
   "version": "0.1.0",
   "description": "Permite que la API local use la sesión activa de Poolside sin exponer cookies.",
-  "permissions": ["scripting", "tabs"],
+  "permissions": ["scripting", "tabs", "storage"],
   "host_permissions": [
     "https://chat.poolside.ai/*",
     "http://127.0.0.1:3100/*"
   ],
   "background": {
     "service_worker": "service-worker.js"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
   },
   "content_scripts": [
     {
