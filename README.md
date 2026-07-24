@@ -3,6 +3,7 @@
 API local para consultar y enviar mensajes a Poolside mediante una pestaña de Chrome autenticada. La extensión ejecuta las solicitudes dentro de `chat.poolside.ai`; la API no lee ni exporta cookies.
 
 La especificación completa está en [openapi.yaml](./openapi.yaml).
+Este proyecto se distribuye bajo la [licencia MIT](./LICENSE).
 
 ## Seguridad
 

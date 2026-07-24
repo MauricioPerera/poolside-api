@@ -2,6 +2,9 @@ openapi: 3.0.3
 info:
   title: Poolside Browser API
   version: 0.1.0
+  license:
+    name: MIT
+    url: https://opensource.org/license/mit
   description: |
     API local que controla Poolside mediante la sesión autenticada de Chrome.
     La extensión local ejecuta las solicitudes dentro de chat.poolside.ai,
