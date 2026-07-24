@@ -1,0 +1,222 @@
+openapi: 3.0.3
+info:
+  title: Poolside Browser API
+  version: 0.1.0
+  description: |
+    API local que controla Poolside mediante la sesión autenticada de Chrome.
+    La extensión local ejecuta las solicitudes dentro de chat.poolside.ai,
+    por lo que la API no almacena cookies ni credenciales.
+servers:
+  - url: http://127.0.0.1:3100
+    description: Servidor local
+tags:
+  - name: Public
+    description: Operaciones destinadas al consumidor de la API
+  - name: Internal
+    description: Comunicación interna con la extensión de Chrome
+paths:
+  /health:
+    get:
+      tags: [Public]
+      summary: Comprueba el estado del servicio
+      responses:
+        '200':
+          description: Servicio disponible
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /chats:
+    get:
+      tags: [Public]
+      summary: Lista conversaciones recientes
+      responses:
+        '200':
+          description: Conversaciones visibles en la cuenta autenticada
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [chats]
+                properties:
+                  chats:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChatSummary'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /chats/{chatId}:
+    get:
+      tags: [Public]
+      summary: Recupera el estado y mensajes de una conversación
+      parameters:
+        - $ref: '#/components/parameters/ChatId'
+      responses:
+        '200':
+          description: Estado de la conversación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatState'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /message:
+    post:
+      tags: [Public]
+      summary: Envía un mensaje y espera la respuesta completa
+      description: |
+        Envía el mensaje mediante la pestaña autenticada de Poolside y consume
+        su respuesta en streaming antes de devolver el texto final.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageRequest'
+            examples:
+              basic:
+                value:
+                  message: Responde únicamente OK
+              configured:
+                value:
+                  message: Resume este tema en tres puntos
+                  chatId: zU2tyjHTTsi4FwaLiGCP6VvV
+                  model: poolside/laguna-xs-2.1
+                  thinking: false
+                  webSearch: true
+      responses:
+        '200':
+          description: Respuesta completada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          description: Solicitud inválida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /bridge/next:
+    get:
+      tags: [Internal]
+      summary: Obtiene el siguiente comando para la extensión
+      responses:
+        '200':
+          description: Comando pendiente
+        '204':
+          description: No hay comandos pendientes
+  /bridge/result:
+    post:
+      tags: [Internal]
+      summary: Devuelve el resultado de un comando de la extensión
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, ok]
+              properties:
+                id: { type: string }
+                ok: { type: boolean }
+                result: {}
+                error: { type: string }
+      responses:
+        '202':
+          description: Resultado aceptado
+        '404':
+          description: Comando inexistente o expirado
+components:
+  parameters:
+    ChatId:
+      name: chatId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]+$'
+      example: zU2tyjHTTsi4FwaLiGCP6VvV
+  responses:
+    ServerError:
+      description: Error al comunicarse con Poolside o la extensión
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Health:
+      type: object
+      required: [ok, service, port, bridge]
+      properties:
+        ok: { type: boolean, example: true }
+        service: { type: string, example: poolside-browser-api }
+        port: { type: integer, example: 3100 }
+        bridge: { type: boolean, example: true }
+    ChatSummary:
+      type: object
+      required: [id, title, url]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        updatedAt: { type: integer, format: int64, nullable: true }
+        isGenerating: { type: boolean }
+        url: { type: string, format: uri }
+    MessageRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          minLength: 1
+        chatId:
+          type: string
+          description: Si se omite, usa la conversación actual o la más reciente.
+        model:
+          type: string
+          enum:
+            - poolside/laguna-s-2.1
+            - poolside/laguna-xs-2.1
+          default: poolside/laguna-s-2.1
+        thinking:
+          type: boolean
+          default: true
+        webSearch:
+          type: boolean
+          default: true
+        attachments:
+          type: array
+          description: Reservado para la próxima versión; aún no implementado.
+          items: { type: string }
+    MessageResponse:
+      type: object
+      required: [chatId, model, options, response]
+      properties:
+        chatId: { type: string }
+        model: { type: string }
+        options:
+          type: object
+          properties:
+            thinking: { type: boolean }
+            webSearch: { type: boolean }
+        response: { type: string }
+    ChatState:
+      type: object
+      description: Estado devuelto por Poolside, incluyendo mensajes y generación.
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        title: { type: string }
+        messageCount: { type: integer }
+        messages:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
