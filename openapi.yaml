@@ -9,6 +9,8 @@ info:
 servers:
   - url: http://127.0.0.1:3100
     description: Servidor local
+security:
+  - PoolsideApiToken: []
 tags:
   - name: Public
     description: Operaciones destinadas al consumidor de la API
@@ -18,6 +20,8 @@ paths:
   /health:
     get:
       tags: [Public]
+      operationId: getHealth
+      security: []
       summary: Comprueba el estado del servicio
       responses:
         '200':
@@ -26,9 +30,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Health'
+        '403':
+          description: Origen no permitido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /chats:
     get:
       tags: [Public]
+      operationId: listChats
       summary: Lista conversaciones recientes
       responses:
         '200':
@@ -45,9 +56,12 @@ paths:
                       $ref: '#/components/schemas/ChatSummary'
         '500':
           $ref: '#/components/responses/ServerError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /chats/{chatId}:
     get:
       tags: [Public]
+      operationId: getChat
       summary: Recupera el estado y mensajes de una conversación
       parameters:
         - $ref: '#/components/parameters/ChatId'
@@ -60,9 +74,12 @@ paths:
                 $ref: '#/components/schemas/ChatState'
         '500':
           $ref: '#/components/responses/ServerError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /message:
     post:
       tags: [Public]
+      operationId: sendMessage
       summary: Envía un mensaje y espera la respuesta completa
       description: |
         Envía el mensaje mediante la pestaña autenticada de Poolside y consume
@@ -97,20 +114,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/ServerError'
   /bridge/next:
     get:
       tags: [Internal]
+      operationId: getBridgeCommand
       summary: Obtiene el siguiente comando para la extensión
       responses:
         '200':
           description: Comando pendiente
         '204':
           description: No hay comandos pendientes
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /bridge/result:
     post:
       tags: [Internal]
+      operationId: submitBridgeResult
       summary: Devuelve el resultado de un comando de la extensión
       requestBody:
         required: true
@@ -129,7 +152,15 @@ paths:
           description: Resultado aceptado
         '404':
           description: Comando inexistente o expirado
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 components:
+  securitySchemes:
+    PoolsideApiToken:
+      type: apiKey
+      in: header
+      name: X-Poolside-API-Token
+      description: Token local de al menos 32 caracteres configurado mediante POOLSIDE_API_TOKEN.
   parameters:
     ChatId:
       name: chatId
@@ -140,6 +171,12 @@ components:
         pattern: '^[A-Za-z0-9_-]+$'
       example: zU2tyjHTTsi4FwaLiGCP6VvV
   responses:
+    Unauthorized:
+      description: Token de API inválido o ausente
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     ServerError:
       description: Error al comunicarse con Poolside o la extensión
       content:
@@ -186,10 +223,6 @@ components:
         webSearch:
           type: boolean
           default: true
-        attachments:
-          type: array
-          description: Reservado para la próxima versión; aún no implementado.
-          items: { type: string }
     MessageResponse:
       type: object
       required: [chatId, model, options, response]

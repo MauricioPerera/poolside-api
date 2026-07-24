@@ -20,9 +20,11 @@ async function executeCommand(command, tabId) {
 }
 
 async function report(id, result) {
+  const { poolsideApiToken } = await chrome.storage.local.get("poolsideApiToken");
+  if (!poolsideApiToken) throw new Error("Configura el token de la API en las opciones de la extensión.");
   await fetch(`${apiBase}/bridge/result`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-poolside-api-token": poolsideApiToken },
     body: JSON.stringify({ id, ...result })
   });
 }
