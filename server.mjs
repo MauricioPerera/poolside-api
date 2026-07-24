@@ -1,5 +1,6 @@
 import http from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 const port = Number(process.env.PORT || 3100);
@@ -12,7 +13,16 @@ const allowedOrigins = new Set(
     .map((origin) => origin.trim())
     .filter(Boolean)
 );
+// Si se declara, solo estas extensiones pueden usar CORS contra la API.
+const allowedExtensionIds = new Set(
+  (process.env.POOLSIDE_ALLOWED_EXTENSION_IDS || "")
+    .split(",")
+    .map((id) => id.trim().toLowerCase())
+    .filter(Boolean)
+);
 const models = new Set(["poolside/laguna-s-2.1", "poolside/laguna-xs-2.1"]);
+const maxBodyBytes = 200_000;
+const maxMessageLength = 100_000;
 
 if (!apiToken || apiToken.length < 32) {
   throw new Error("Define POOLSIDE_API_TOKEN con al menos 32 caracteres antes de iniciar la API.");
@@ -25,6 +35,12 @@ const bridgeQueue = [];
 const bridgePending = new Map();
 let lastBridgePollAt = 0;
 const bridgeConnectionWindowMs = 60_000;
+// El puente sondea cada 750 ms: si no recoge el comando en unos segundos es que
+// la pestaña ya no está viva, y conviene fallar rápido en lugar de bloquear la
+// cola de peticiones durante el timeout largo de ejecución.
+const bridgeDeliveryTimeoutMs = Number(process.env.POOLSIDE_BRIDGE_DELIVERY_TIMEOUT_MS || 10_000);
+const bridgeResultTimeoutMs = Number(process.env.POOLSIDE_BRIDGE_RESULT_TIMEOUT_MS || 120_000);
+const bridgeMaxQueue = 32;
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -41,12 +57,18 @@ function json(res, status, body, headers = {}) {
   res.end(status === 204 ? undefined : JSON.stringify(body));
 }
 
+function extensionOriginAllowed(origin) {
+  // Las solicitudes del content script llegan con el origen de la extensión,
+  // no con el de la página de Poolside. El token sigue siendo obligatorio.
+  const id = origin.slice("chrome-extension://".length).toLowerCase();
+  if (!/^[a-p]{32}$/.test(id)) return false;
+  return allowedExtensionIds.size === 0 || allowedExtensionIds.has(id);
+}
+
 function corsHeaders(req) {
   const origin = req.headers.origin;
   if (!origin) return {};
-  // Las solicitudes del content script llegan con el origen de la extensión,
-  // no con el de la página de Poolside. El token sigue siendo obligatorio.
-  const isChromeExtension = origin.startsWith("chrome-extension://");
+  const isChromeExtension = origin.startsWith("chrome-extension://") && extensionOriginAllowed(origin);
   if (!allowedOrigins.has(origin) && !isChromeExtension) {
     throw new HttpError(403, "Origen no permitido.");
   }
@@ -77,19 +99,48 @@ function bridgeIsConnected() {
   return Date.now() - lastBridgePollAt < bridgeConnectionWindowMs;
 }
 
+function dropFromBridgeQueue(id) {
+  const index = bridgeQueue.findIndex((item) => item.id === id);
+  if (index !== -1) bridgeQueue.splice(index, 1);
+}
+
 function enqueueBridge(command) {
-  const id = crypto.randomUUID();
+  if (bridgeQueue.length >= bridgeMaxQueue) {
+    throw new HttpError(503, "La cola del puente está saturada; reintenta más tarde.");
+  }
+  const id = randomUUID();
+  bridgeQueue.push({ id, ...command });
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
+    // Al resolver, rechazar o expirar hay que sacar el comando de la cola: si se
+    // queda, un poll posterior lo entrega y la extensión ejecuta dos veces un
+    // envío que la API ya dio por perdido.
+    const settle = (finish) => (value) => {
+      clearTimeout(deliveryTimer);
+      clearTimeout(resultTimer);
       bridgePending.delete(id);
-      reject(new HttpError(504, "La extensión de Chrome no respondió a tiempo."));
-    }, 120_000);
-    bridgePending.set(id, {
-      resolve: (value) => { clearTimeout(timeout); resolve(value); },
-      reject: (error) => { clearTimeout(timeout); reject(error); }
-    });
-    bridgeQueue.push({ id, ...command });
+      dropFromBridgeQueue(id);
+      finish(value);
+    };
+    const pending = { delivered: false, resolve: settle(resolve), reject: settle(reject) };
+    const deliveryTimer = setTimeout(() => {
+      if (!pending.delivered) pending.reject(new HttpError(504, "La extensión de Chrome no recogió el comando."));
+    }, bridgeDeliveryTimeoutMs);
+    const resultTimer = setTimeout(() => {
+      pending.reject(new HttpError(504, "La extensión de Chrome no respondió a tiempo."));
+    }, bridgeResultTimeoutMs);
+    bridgePending.set(id, pending);
   });
+}
+
+function nextBridgeCommand() {
+  while (bridgeQueue.length) {
+    const command = bridgeQueue.shift();
+    const pending = bridgePending.get(command.id);
+    if (!pending) continue;
+    pending.delivered = true;
+    return command;
+  }
+  return null;
 }
 
 async function bridgeOrCdp(command, fallback) {
@@ -167,7 +218,7 @@ function validateMessagePayload(payload) {
   if (typeof payload.message !== "string" || !payload.message.trim()) {
     throw new HttpError(400, "El campo message es obligatorio y debe ser texto.");
   }
-  if (payload.message.length > 100_000) throw new HttpError(413, "El mensaje supera el tamaño permitido.");
+  if (payload.message.length > maxMessageLength) throw new HttpError(413, "El mensaje supera el tamaño permitido.");
   if (payload.chatId !== undefined) validateChatId(payload.chatId);
   if (payload.model !== undefined && !models.has(payload.model)) {
     throw new HttpError(400, "El modelo solicitado no está permitido.");
@@ -201,11 +252,15 @@ async function sendMessageDirect(payload) {
   const chatId = payload.chatId || currentId || chats[0]?.id;
   if (!chatId) throw new HttpError(409, "No hay una conversación disponible. Crea un chat en Poolside primero.");
 
-  const state = await getChatDirect(chatId);
+  // Solo hace falta el último mensaje para encadenar; pedir la cola entera
+  // duplicaría el trabajo que ya hace la extensión con tail=1.
+  const stateResult = await poolsideRequest(`/api/chat/${chatId}/state?tail=1`);
+  if (!stateResult.ok) throw new HttpError(502, `Poolside rechazó la conversación (${stateResult.status}).`);
+  const state = stateResult.data || {};
   const baseMessageId = state.messages?.at(-1)?.id || state.prefixLastMessageId;
 
-  const generationId = crypto.randomUUID();
-  const messageId = crypto.randomUUID();
+  const generationId = randomUUID();
+  const messageId = randomUUID();
   const requestPayload = {
     chatId,
     model: payload.model || "poolside/laguna-s-2.1",
@@ -288,7 +343,9 @@ async function body(req) {
   const chunks = [];
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > 100_000) throw new HttpError(413, "El cuerpo de la solicitud es demasiado grande.");
+    // Holgado respecto a maxMessageLength para que el límite del mensaje sea
+    // alcanzable incluso con el escapado de JSON.
+    if (size > maxBodyBytes) throw new HttpError(413, "El cuerpo de la solicitud es demasiado grande.");
     chunks.push(chunk);
   }
   const raw = Buffer.concat(chunks).toString("utf8");
@@ -310,13 +367,14 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && req.url === "/bridge/next") {
       lastBridgePollAt = Date.now();
-      const command = bridgeQueue.shift();
+      const command = nextBridgeCommand();
       if (!command) return json(res, 204, null, headers);
       return json(res, 200, command, headers);
     }
 
     if (req.method === "POST" && req.url === "/bridge/result") {
       const result = await body(req);
+      if (typeof result.id !== "string") throw new HttpError(400, "El resultado debe incluir el id del comando.");
       const pending = bridgePending.get(result.id);
       if (!pending) throw new HttpError(404, "Comando desconocido o expirado.");
       bridgePending.delete(result.id);
@@ -351,15 +409,23 @@ const server = http.createServer(async (req, res) => {
 
     throw new HttpError(404, "Ruta no encontrada.");
   } catch (error) {
-    const status = error instanceof HttpError ? error.status : 500;
-    const message = error instanceof Error ? error.message : "Error interno.";
-    json(res, status, { error: message }, headers);
+    if (error instanceof HttpError) {
+      json(res, error.status, { error: error.message }, headers);
+      return;
+    }
+    // Los errores inesperados (Playwright, CDP) llevan rutas locales y detalles
+    // del entorno: se registran, no se devuelven.
+    console.error("Error interno:", error);
+    json(res, 500, { error: "Error interno." }, headers);
   }
 });
 
-server.listen(port, "127.0.0.1", () => {
-  console.log(`Poolside API escuchando en http://127.0.0.1:${port}`);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  server.listen(port, "127.0.0.1", () => {
+    console.log(`Poolside API escuchando en http://127.0.0.1:${port}`);
+  });
+  process.once("SIGINT", () => server.close());
+  process.once("SIGTERM", () => server.close());
+}
 
-process.once("SIGINT", () => server.close());
-process.once("SIGTERM", () => server.close());
+export { server, validateChatId, validateCreateChatPayload, validateMessagePayload };

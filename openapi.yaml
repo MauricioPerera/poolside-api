@@ -34,11 +34,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Health'
         '403':
-          description: Origen no permitido
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/Forbidden'
   /chats:
     get:
       tags: [Public]
@@ -57,10 +53,18 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/ChatSummary'
-        '500':
-          $ref: '#/components/responses/ServerError'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
     post:
       tags: [Public]
       operationId: createChat
@@ -82,15 +86,21 @@ paths:
               schema:
                 $ref: '#/components/schemas/CreatedChat'
         '400':
-          description: Solicitud inválida
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '500':
           $ref: '#/components/responses/ServerError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /chats/{chatId}:
     get:
       tags: [Public]
@@ -105,10 +115,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ChatState'
-        '500':
-          $ref: '#/components/responses/ServerError'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /message:
     post:
       tags: [Public]
@@ -117,6 +137,8 @@ paths:
       description: |
         Envía el mensaje mediante la pestaña autenticada de Poolside y consume
         su respuesta en streaming antes de devolver el texto final.
+        El campo `attachments` todavía no está implementado: si se envía, la
+        API responde 400 en lugar de ignorarlo en silencio.
       requestBody:
         required: true
         content:
@@ -142,27 +164,48 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
         '400':
-          description: Solicitud inválida
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: No hay ninguna conversación disponible a la que enviar el mensaje
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '500':
           $ref: '#/components/responses/ServerError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
   /bridge/next:
     get:
       tags: [Internal]
       operationId: getBridgeCommand
       summary: Obtiene el siguiente comando para la extensión
+      description: |
+        Cada sondeo marca el puente como conectado. Los comandos que expiran
+        antes de ser recogidos se descartan y nunca se entregan.
       responses:
         '200':
           description: Comando pendiente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BridgeCommand'
         '204':
           description: No hay comandos pendientes
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /bridge/result:
     post:
       tags: [Internal]
@@ -183,10 +226,20 @@ paths:
       responses:
         '202':
           description: Resultado aceptado
-        '404':
-          description: Comando inexistente o expirado
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Comando inexistente o expirado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
 components:
   securitySchemes:
     PoolsideApiToken:
@@ -204,14 +257,50 @@ components:
         pattern: '^[A-Za-z0-9_-]+$'
       example: zU2tyjHTTsi4FwaLiGCP6VvV
   responses:
+    BadRequest:
+      description: Solicitud inválida
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     Unauthorized:
       description: Token de API inválido o ausente
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Origen no permitido por la política CORS
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    PayloadTooLarge:
+      description: El cuerpo supera 200 000 bytes o el mensaje 100 000 caracteres
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     ServerError:
-      description: Error al comunicarse con Poolside o la extensión
+      description: Error interno de la API
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    BadGateway:
+      description: Poolside o la extensión devolvieron una respuesta inutilizable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unavailable:
+      description: No hay puente de Chrome ni pestaña autenticada disponible, o la cola del puente está saturada
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    GatewayTimeout:
+      description: La extensión no recogió el comando o no respondió a tiempo
       content:
         application/json:
           schema:
@@ -262,6 +351,7 @@ components:
         message:
           type: string
           minLength: 1
+          maxLength: 100000
         chatId:
           type: string
           description: Si se omite, usa la conversación actual o la más reciente.
@@ -302,6 +392,21 @@ components:
           items:
             type: object
             additionalProperties: true
+    BridgeCommand:
+      type: object
+      required: [id, type]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Identificador que la extensión debe devolver en /bridge/result.
+        type:
+          type: string
+          enum: [listChats, getChat, createChat, sendMessage]
+        chatId: { type: string }
+        payload:
+          type: object
+          additionalProperties: true
     Error:
       type: object
       required: [error]

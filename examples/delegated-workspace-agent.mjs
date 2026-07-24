@@ -1,5 +1,12 @@
-import { lstat, mkdir, open, readFile, realpath } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, realpath, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Rutas que el subagente nunca puede escribir, aunque estén dentro del
+// workspace o aparezcan en --allow: escribir aquí es ejecución de código en el
+// siguiente comando de git, npm o CI.
+const forbiddenSegments = new Set([".git", ".github", ".gitlab-ci.yml", "node_modules", ".husky", ".vscode"]);
+const forbiddenFiles = new Set(["package.json", "package-lock.json", ".npmrc", ".env", ".gitignore", ".gitattributes"]);
 
 const usage = `Uso:
   node examples/delegated-workspace-agent.mjs --workspace <carpeta> --task <instrucción> [opciones]
@@ -37,6 +44,22 @@ async function prepareWorkspace(workspace) {
   const info = await lstat(workspace);
   if (info.isSymbolicLink()) throw new Error("--workspace no puede ser un enlace simbólico.");
   return realpath(workspace);
+}
+
+function normalize(path) {
+  return path.replaceAll("\\", "/").replace(/^\.\//, "");
+}
+
+function assertWritable(relativeFile) {
+  const segments = normalize(relativeFile).split("/").filter(Boolean);
+  for (const segment of segments) {
+    if (forbiddenSegments.has(segment.toLowerCase())) {
+      throw new Error(`Ruta protegida, el subagente no puede escribir en ella: ${relativeFile}`);
+    }
+  }
+  if (forbiddenFiles.has(segments.at(-1)?.toLowerCase())) {
+    throw new Error(`Archivo protegido, el subagente no puede escribir en él: ${relativeFile}`);
+  }
 }
 
 async function safePath(root, relativeFile, { createParents = false } = {}) {
@@ -87,6 +110,7 @@ function parsePlan(response) {
     if (!change || typeof change.path !== "string" || typeof change.content !== "string") {
       throw new Error("El subagente propuso un cambio inválido.");
     }
+    assertWritable(change.path);
   }
   return plan;
 }
@@ -105,22 +129,66 @@ async function readContext(root, context) {
   return entries;
 }
 
+async function exists(target) {
+  try {
+    await lstat(target);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 async function applyPlan(root, changes, overwrite) {
-  const written = [];
+  // Se resuelve y valida el plan entero antes de tocar el disco, y se deshacen
+  // los archivos creados si algo falla a mitad.
+  const targets = [];
   for (const change of changes) {
+    assertWritable(change.path);
     const target = await safePath(root, change.path, { createParents: true });
-    const handle = await open(target, overwrite ? "w" : "wx", 0o600);
-    try { await handle.writeFile(change.content, "utf8"); } finally { await handle.close(); }
-    written.push(target);
+    const existed = await exists(target);
+    if (existed && !overwrite) throw new Error(`El archivo ya existe, usa --overwrite: ${change.path}`);
+    targets.push({ target, existed, content: change.content });
+  }
+
+  const written = [];
+  const created = [];
+  try {
+    for (const item of targets) {
+      const handle = await open(item.target, item.existed ? "w" : "wx", 0o600);
+      try { await handle.writeFile(item.content, "utf8"); } finally { await handle.close(); }
+      if (!item.existed) created.push(item.target);
+      written.push(item.target);
+    }
+  } catch (error) {
+    for (const target of created) await unlink(target).catch(() => {});
+    throw error;
   }
   return written;
 }
 
+function toMatcher(pattern) {
+  const source = normalize(pattern)
+    .replace(/\/+$/, "/**")
+    .replace(/\/\*\*|\*\*|\*|[.+?^${}()|[\]\\]/g, (token) => {
+      if (token === "/**") return "(?:/.*)?";
+      if (token === "**") return ".*";
+      if (token === "*") return "[^/]*";
+      return `\\${token}`;
+    });
+  return new RegExp(`^${source}$`);
+}
+
 function assertAllowedChanges(changes, allow) {
   if (!allow) return;
-  const allowed = new Set(allow.split(",").map((item) => item.trim()).filter(Boolean));
+  // touch_only y --allow pueden traer patrones (src/**, docs/*.md) además de
+  // rutas exactas; una comparación literal rechazaría planes válidos.
+  const matchers = allow.split(",").map((item) => item.trim()).filter(Boolean).map(toMatcher);
   for (const change of changes) {
-    if (!allowed.has(change.path)) throw new Error(`El plan propone modificar fuera del perímetro permitido: ${change.path}`);
+    const path = normalize(change.path);
+    if (!matchers.some((matcher) => matcher.test(path))) {
+      throw new Error(`El plan propone modificar fuera del perímetro permitido: ${change.path}`);
+    }
   }
 }
 
@@ -160,7 +228,11 @@ async function main() {
   console.log(JSON.stringify({ chatId: chat.id, applied: true, summary: plan.summary, files }, null, 2));
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}
+
+export { applyPlan, assertAllowedChanges, assertWritable, parsePlan, safePath, toMatcher };

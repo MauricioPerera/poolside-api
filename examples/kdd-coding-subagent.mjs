@@ -29,9 +29,17 @@ function safeRelative(root, path) {
 }
 
 function touchOnly(contract) {
-  const match = contract.match(/^touch_only:\s*\[([^\]]*)\]/m);
-  if (!match) throw new Error("El contrato no define touch_only en formato de lista.");
-  const paths = match[1].split(",").map((item) => item.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean);
+  const clean = (item) => item.trim().replace(/^['"]|['"]$/g, "");
+  const inline = contract.match(/^touch_only:\s*\[([^\]]*)\]/m);
+  let paths;
+  if (inline) {
+    paths = inline[1].split(",").map(clean).filter(Boolean);
+  } else {
+    // Los contratos también pueden escribir touch_only como lista YAML en bloque.
+    const block = contract.match(/^touch_only:[ \t]*\r?\n((?:[ \t]*-[ \t]*.+\r?\n?)+)/m);
+    if (!block) throw new Error("El contrato no define touch_only en formato de lista.");
+    paths = block[1].split(/\r?\n/).map((line) => line.replace(/^[ \t]*-[ \t]*/, "")).map(clean).filter(Boolean);
+  }
   if (!paths.length) throw new Error("touch_only no puede estar vacío para un subagente codificador.");
   return paths;
 }
@@ -66,4 +74,8 @@ async function main() {
   process.exitCode = result.status ?? 1;
 }
 
-main().catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
+}
+
+export { safeRelative, touchOnly };

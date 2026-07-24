@@ -21,5 +21,11 @@ jobs:
       - run: node --check chrome-bridge/content.js
       - run: node --check chrome-bridge/service-worker.js
       - run: node --check chrome-bridge/options.js
+      - run: node --check examples/local-file-agent.mjs
+      - run: node --check examples/delegated-workspace-agent.mjs
+      - run: node --check examples/kdd-coding-subagent.mjs
+      - run: npm test
       - run: npm audit --omit=dev --audit-level=high
-      - run: npx --yes @redocly/cli@latest lint openapi.yaml
+      # Versión fijada: 'latest' haría el CI irreproducible y dependiente de una
+      # publicación de terceros.
+      - run: npx --yes @redocly/cli@2.40.0 lint openapi.yaml

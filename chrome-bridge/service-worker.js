@@ -1,12 +1,24 @@
 const apiBase = "http://127.0.0.1:3100";
+const appPrefix = "https://chat.poolside.ai/";
+
+function isPoolsideUrl(url) {
+  return typeof url === "string" && url.startsWith(appPrefix);
+}
 
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message?.type !== "poolside-command" || !message.command || !sender.tab?.id) return;
+  // El content script solo se declara para chat.poolside.ai, pero comprobarlo
+  // aquí evita inyectar el comando si el mensaje llega desde otro marco.
+  if (!isPoolsideUrl(sender.url)) return;
   executeCommand(message.command, sender.tab.id).catch(() => {});
 });
 
 async function executeCommand(command, tabId) {
   try {
+    // La pestaña puede haber navegado entre el envío del mensaje y este punto:
+    // se vuelve a comprobar antes de ejecutar nada en el mundo principal.
+    const tab = await chrome.tabs.get(tabId);
+    if (!isPoolsideUrl(tab?.url)) throw new Error("La pestaña ya no está en Poolside.");
     const results = await chrome.scripting.executeScript({
       target: { tabId },
       world: "MAIN",
