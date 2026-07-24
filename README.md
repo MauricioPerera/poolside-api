@@ -84,3 +84,16 @@ node examples/local-file-agent.mjs `
 ```
 
 Usa `--overwrite` únicamente si quieres reemplazar un archivo existente. La carpeta predeterminada sugerida `.agent-output` está excluida de Git.
+
+## Subagente para un proyecto acotado
+
+`examples/delegated-workspace-agent.mjs` delega una tarea a Poolside con contexto explícito. Por defecto solo devuelve un plan JSON; no escribe nada. Revisa el plan y ejecútalo con `--apply` cuando estés conforme. Para reemplazar archivos existentes se requieren tanto `--apply` como `--overwrite`.
+
+```powershell
+node examples/delegated-workspace-agent.mjs `
+  --workspace 'C:\ruta\a\mi-proyecto' `
+  --context 'src\app.js,README.md' `
+  --task 'Agrega una función de saludo documentada.'
+```
+
+El contexto y cada cambio propuesto se validan dentro de la carpeta del proyecto; no se permiten rutas absolutas, escapes con `..`, ni enlaces simbólicos.
