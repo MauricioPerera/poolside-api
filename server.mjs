@@ -143,6 +143,19 @@ async function getChatDirect(id) {
   return { id, url: `${appUrl.replace(/\/$/, "")}/c/${id}`, ...result.data };
 }
 
+async function createChatDirect(payload) {
+  const result = await poolsideRequest("/api/chats", "POST", {
+    title: payload.title,
+    model: payload.model || "poolside/laguna-s-2.1",
+    inferenceMode: "platform",
+    incognito: false
+  });
+  if (!result.ok) throw new HttpError(502, `Poolside no pudo crear la conversación (${result.status}).`);
+  const id = result.data?.id || result.data?.chat?.id;
+  if (!id) throw new HttpError(502, "Poolside creó una conversación sin devolver su id.");
+  return { id, title: result.data?.title || payload.title, url: `${appUrl.replace(/\/$/, "")}/c/${id}` };
+}
+
 function validateChatId(value) {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value)) {
     throw new HttpError(400, "El id de conversación no es válido.");
@@ -170,6 +183,17 @@ function validateMessagePayload(payload) {
   return { ...payload, message: payload.message.trim() };
 }
 
+function validateCreateChatPayload(payload) {
+  if (typeof payload.title !== "string" || !payload.title.trim()) {
+    throw new HttpError(400, "El campo title es obligatorio y debe ser texto.");
+  }
+  if (payload.title.length > 1_000) throw new HttpError(413, "El título supera el tamaño permitido.");
+  if (payload.model !== undefined && !models.has(payload.model)) {
+    throw new HttpError(400, "El modelo solicitado no está permitido.");
+  }
+  return { ...payload, title: payload.title.trim() };
+}
+
 async function sendMessageDirect(payload) {
   const chats = await listChatsDirect();
   const currentUrl = (await browserPage()).url();
@@ -179,9 +203,9 @@ async function sendMessageDirect(payload) {
 
   const state = await getChatDirect(chatId);
   const baseMessageId = state.messages?.at(-1)?.id || state.prefixLastMessageId;
-  if (!baseMessageId) throw new HttpError(409, "No se pudo determinar el mensaje base de la conversación.");
 
   const generationId = crypto.randomUUID();
+  const messageId = crypto.randomUUID();
   const requestPayload = {
     chatId,
     model: payload.model || "poolside/laguna-s-2.1",
@@ -189,8 +213,9 @@ async function sendMessageDirect(payload) {
     options: { webSearch: payload.webSearch !== false, thinking: payload.thinking !== false, slack: false, slackWrite: false },
     id: chatId,
     trigger: "submit-message",
-    baseMessageId,
-    message: { parts: [{ type: "text", text: payload.message }], id: crypto.randomUUID(), role: "user" },
+    messageId,
+    baseMessageId: baseMessageId || null,
+    message: { messageId, parts: [{ type: "text", text: payload.message }], id: messageId, role: "user" },
     generationId
   };
 
@@ -211,6 +236,13 @@ async function sendMessageDirect(payload) {
   const response = assistant?.parts?.find((part) => part.type === "text")?.text;
   if (!response) throw new HttpError(502, "Poolside terminó el stream sin devolver texto.");
   return { chatId, model: requestPayload.model, options: requestPayload.options, response };
+}
+
+async function createChatWithBridge(payload) {
+  const result = await enqueueBridge({ type: "createChat", payload });
+  const id = result?.id || result?.chat?.id;
+  if (!id) throw new HttpError(502, "La extensión no devolvió el id de la conversación creada.");
+  return { id, title: result.title || payload.title, url: `${appUrl.replace(/\/$/, "")}/c/${id}` };
 }
 
 async function sendMessageWithBridge(payload) {
@@ -288,6 +320,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/chats") {
       const chats = await enqueue(() => bridgeOrCdp({ type: "listChats" }, listChatsDirect));
       return json(res, 200, { chats }, headers);
+    }
+
+    if (req.method === "POST" && req.url === "/chats") {
+      const payload = validateCreateChatPayload(await body(req));
+      const chat = await enqueue(() => bridgeOrCdp({ type: "createChat", payload }, () => createChatDirect(payload)));
+      return json(res, 201, chat, headers);
     }
 
     const chatMatch = req.method === "GET" && req.url.match(/^\/chats\/([^/?#]+)$/);

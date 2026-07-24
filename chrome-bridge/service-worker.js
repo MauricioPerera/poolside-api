@@ -60,6 +60,20 @@ async function runPoolsideCommand(command) {
     return { id: command.chatId, url: `${location.origin}/c/${command.chatId}`, ...result.data };
   }
 
+  if (command.type === "createChat") {
+    const payload = command.payload;
+    const result = await request("/api/chats", "POST", {
+      title: payload.title,
+      model: payload.model || "poolside/laguna-s-2.1",
+      inferenceMode: "platform",
+      incognito: false
+    });
+    if (!result.ok) throw new Error(`Poolside no pudo crear la conversación (${result.status}).`);
+    const id = result.data?.id || result.data?.chat?.id;
+    if (!id) throw new Error("Poolside creó una conversación sin devolver su id.");
+    return { id, title: result.data?.title || payload.title, url: `${location.origin}/c/${id}` };
+  }
+
   if (command.type === "sendMessage") {
     const payload = command.payload;
     const chats = await runPoolsideCommand({ type: "listChats" });
@@ -70,9 +84,9 @@ async function runPoolsideCommand(command) {
     const stateResult = await request(`/api/chat/${chatId}/state?tail=1`);
     const state = stateResult.data || {};
     const baseMessageId = state.messages?.at(-1)?.id || state.prefixLastMessageId;
-    if (!baseMessageId) throw new Error("No se pudo determinar el mensaje base.");
 
     const generationId = crypto.randomUUID();
+    const messageId = crypto.randomUUID();
     const postBody = {
       chatId,
       model: payload.model || "poolside/laguna-s-2.1",
@@ -85,10 +99,12 @@ async function runPoolsideCommand(command) {
       },
       id: chatId,
       trigger: "submit-message",
-      baseMessageId,
+      messageId,
+      baseMessageId: baseMessageId || null,
       message: {
+        messageId,
         parts: [{ type: "text", text: payload.message }],
-        id: crypto.randomUUID(),
+        id: messageId,
         role: "user"
       },
       generationId

@@ -61,6 +61,36 @@ paths:
           $ref: '#/components/responses/ServerError'
         '401':
           $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Public]
+      operationId: createChat
+      summary: Crea una conversación vacía para un contexto limpio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChatRequest'
+            example:
+              title: Investigación de mercado independiente
+              model: poolside/laguna-s-2.1
+      responses:
+        '201':
+          description: Conversación creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedChat'
+        '400':
+          description: Solicitud inválida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
   /chats/{chatId}:
     get:
       tags: [Public]
@@ -203,6 +233,27 @@ components:
         title: { type: string }
         updatedAt: { type: integer, format: int64, nullable: true }
         isGenerating: { type: boolean }
+        url: { type: string, format: uri }
+    CreateChatRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        model:
+          type: string
+          enum:
+            - poolside/laguna-s-2.1
+            - poolside/laguna-xs-2.1
+          default: poolside/laguna-s-2.1
+    CreatedChat:
+      type: object
+      required: [id, title, url]
+      properties:
+        id: { type: string }
+        title: { type: string }
         url: { type: string, format: uri }
     MessageRequest:
       type: object

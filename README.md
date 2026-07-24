@@ -49,12 +49,19 @@ Invoke-RestMethod http://127.0.0.1:3100/health
 Invoke-RestMethod http://127.0.0.1:3100/chats -Headers $headers
 Invoke-RestMethod http://127.0.0.1:3100/chats/<chatId> -Headers $headers
 
+$chat = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:3100/chats `
+  -Headers $headers `
+  -ContentType 'application/json' `
+  -Body '{"title":"Investigación independiente","model":"poolside/laguna-s-2.1"}'
+
 Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:3100/message `
   -Headers $headers `
   -ContentType 'application/json' `
-  -Body '{"message":"Responde únicamente OK","model":"poolside/laguna-s-2.1","thinking":true,"webSearch":false}'
+  -Body (@{chatId=$chat.id;message="Responde únicamente OK";model="poolside/laguna-s-2.1";thinking=$true;webSearch=$false} | ConvertTo-Json)
 ```
 
 Modelos admitidos:
