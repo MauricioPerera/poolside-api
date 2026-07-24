@@ -7,7 +7,7 @@ La especificación completa está en [openapi.yaml](./openapi.yaml).
 ## Uso
 
 ```powershell
-cd C:\Users\Administrador\Documents\hostinger\poolside-api
+cd <directorio-clonado>\poolside-api
 npm install
 npm start
 ```
@@ -23,7 +23,7 @@ La alternativa recomendada para conservar tu Chrome actual es cargar la extensi�
 1. Abre `chrome://extensions`.
 2. Activa **Developer mode**.
 3. Selecciona **Load unpacked**.
-4. Elige la carpeta `C:\Users\Administrador\Documents\hostinger\poolside-api\chrome-bridge`.
+4. Elige la carpeta `<directorio-clonado>\poolside-api\chrome-bridge`.
 5. Recarga la pestaña de Poolside.
 
 La extensión solo ejecuta solicitudes dentro de `chat.poolside.ai` y se comunica con `127.0.0.1:3100`; no lee ni almacena cookies.
