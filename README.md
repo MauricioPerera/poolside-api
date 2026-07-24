@@ -97,3 +97,15 @@ node examples/delegated-workspace-agent.mjs `
 ```
 
 El contexto y cada cambio propuesto se validan dentro de la carpeta del proyecto; no se permiten rutas absolutas, escapes con `..`, ni enlaces simbólicos.
+
+### Wrapper para KDD
+
+Para un clon de [KDD](https://github.com/MauricioPerera/KDD), usa `kdd-coding-subagent.mjs`. Lee el Task Contract, suministra las reglas de `.agents/AGENTS.md` y limita los cambios exactamente a `touch_only`.
+
+```powershell
+node examples/kdd-coding-subagent.mjs `
+  --kdd-root 'C:\ruta\a\KDD' `
+  --contract 'knowledge\contracts\assemble-context.md'
+```
+
+El primer comando solo devuelve el plan. Después de revisarlo, añade `--apply`; para modificar un archivo existente, añade también `--overwrite`.

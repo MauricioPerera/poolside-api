@@ -239,10 +239,18 @@ async function sendMessageDirect(payload) {
 }
 
 async function createChatWithBridge(payload) {
+  const before = await enqueueBridge({ type: "listChats" });
   const result = await enqueueBridge({ type: "createChat", payload });
   const id = result?.id || result?.chat?.id;
-  if (!id) throw new HttpError(502, "La extensión no devolvió el id de la conversación creada.");
-  return { id, title: result.title || payload.title, url: `${appUrl.replace(/\/$/, "")}/c/${id}` };
+  if (id) return { id, title: result.title || payload.title, url: `${appUrl.replace(/\/$/, "")}/c/${id}` };
+
+  // Chrome puede omitir el valor de executeScript aunque la creación haya
+  // terminado. Recuperamos el chat nuevo comparando el historial del puente.
+  const existingIds = new Set(before.map((chat) => chat.id));
+  const after = await enqueueBridge({ type: "listChats" });
+  const created = after.find((chat) => !existingIds.has(chat.id)) || after.find((chat) => chat.title === payload.title);
+  if (!created) throw new HttpError(502, "La extensión no devolvió el id de la conversación creada.");
+  return created;
 }
 
 async function sendMessageWithBridge(payload) {

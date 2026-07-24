@@ -6,6 +6,7 @@ const usage = `Uso:
 
 Opciones:
   --context <rutas>     Archivos relativos separados por coma que el subagente puede leer
+  --allow <rutas>       Archivos relativos que el subagente puede modificar (separados por coma)
   --apply                Escribe los cambios propuestos; sin esta opción solo muestra el plan
   --overwrite            Permite reemplazar archivos existentes (requiere --apply)
   --api <url>            API local (predeterminada: http://127.0.0.1:3100)
@@ -115,6 +116,14 @@ async function applyPlan(root, changes, overwrite) {
   return written;
 }
 
+function assertAllowedChanges(changes, allow) {
+  if (!allow) return;
+  const allowed = new Set(allow.split(",").map((item) => item.trim()).filter(Boolean));
+  for (const change of changes) {
+    if (!allowed.has(change.path)) throw new Error(`El plan propone modificar fuera del perímetro permitido: ${change.path}`);
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) return console.log(usage);
@@ -142,6 +151,7 @@ async function main() {
     chatId: chat.id, message: prompt, model, thinking: true, webSearch: false
   });
   const plan = parsePlan(result.response);
+  assertAllowedChanges(plan.changes, args.allow);
   if (!args.apply) {
     console.log(JSON.stringify({ chatId: chat.id, dryRun: true, ...plan }, null, 2));
     return;
