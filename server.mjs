@@ -43,7 +43,12 @@ function json(res, status, body, headers = {}) {
 function corsHeaders(req) {
   const origin = req.headers.origin;
   if (!origin) return {};
-  if (!allowedOrigins.has(origin)) throw new HttpError(403, "Origen no permitido.");
+  // Las solicitudes del content script llegan con el origen de la extensión,
+  // no con el de la página de Poolside. El token sigue siendo obligatorio.
+  const isChromeExtension = origin.startsWith("chrome-extension://");
+  if (!allowedOrigins.has(origin) && !isChromeExtension) {
+    throw new HttpError(403, "Origen no permitido.");
+  }
   return {
     "access-control-allow-origin": origin,
     "access-control-allow-methods": "GET,POST,OPTIONS",
