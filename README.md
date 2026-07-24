@@ -70,3 +70,17 @@ Modelos admitidos:
 - `poolside/laguna-xs-2.1`
 
 Los adjuntos aún no están implementados. La integración depende de las rutas internas de Poolside y puede requerir ajustes si cambian.
+
+## Agente local con escritura acotada
+
+El ejemplo `examples/local-file-agent.mjs` crea un chat limpio, solicita contenido a Poolside y escribe el resultado en un archivo local. Solo acepta rutas relativas dentro de la carpeta indicada y, de forma predeterminada, no reemplaza archivos existentes ni sigue enlaces simbólicos.
+
+```powershell
+$env:POOLSIDE_API_TOKEN = '<tu-token>'
+node examples/local-file-agent.mjs `
+  --workspace .\.agent-output `
+  --file resumen.md `
+  --prompt 'Escribe un resumen de tres puntos sobre pruebas de software.'
+```
+
+Usa `--overwrite` únicamente si quieres reemplazar un archivo existente. La carpeta predeterminada sugerida `.agent-output` está excluida de Git.

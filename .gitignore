@@ -1,3 +1,4 @@
 node_modules/
 .poolside-profile/
 .env
+.agent-output/
