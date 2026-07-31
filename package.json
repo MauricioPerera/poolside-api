@@ -11,6 +11,6 @@
     "test": "node --test \"test/*.test.mjs\""
   },
   "dependencies": {
-    "playwright": "^1.52.0"
+    "playwright": "^1.62.0"
   }
 }
